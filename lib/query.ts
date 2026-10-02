@@ -22,8 +22,39 @@ function escIlike(s: string): string {
 }
 
 function cleanPhone(s: string): string {
-  // strip spaces, dashes, parens, +91 prefix, leading 0
   return s.replace(/[\s\-()+]/g, '').replace(/^91(\d{10})$/, '$1').replace(/^0+/, '');
+}
+
+// Shared filter logic — applied by both queryBrand and countBrand.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyFilters(q: any, brand: BrandConfig, filters: Filters): any {
+  // Global search — strip , ( ) % then search across globalSearch columns
+  const rawQ = (filters.q ?? '').replace(/[,()\%]/g, '').trim();
+  if (rawQ) {
+    const cols = brand.columns.filter((c) => c.globalSearch).map((c) => c.field);
+    if (cols.length) {
+      const e = escIlike(rawQ);
+      q = q.or(cols.map((f) => `${f}.ilike.%${e}%`).join(','));
+    }
+  }
+
+  // Per-column filters
+  for (const col of brand.columns) {
+    const val = filters[col.field];
+    if (!val) continue;
+    if (col.filter === 'search') {
+      const v = col.field === 'customer_mobile' ? cleanPhone(val) : val;
+      q = q.ilike(col.field, `%${escIlike(v)}%`);
+    } else if (col.filter === 'select') {
+      q = col.type === 'boolean' ? q.eq(col.field, val === 'Paid') : q.eq(col.field, val);
+    }
+  }
+
+  // Date range — always applies to brand.dateField
+  if (filters.dateFrom) q = q.gte(brand.dateField, filters.dateFrom);
+  if (filters.dateTo) q = q.lte(brand.dateField, filters.dateTo);
+
+  return q;
 }
 
 export async function queryBrand(
@@ -38,41 +69,8 @@ export async function queryBrand(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q: any = supabase.from(brand.table).select('*', { count: 'exact' });
+  q = applyFilters(q, brand, filters);
 
-  // Global search — strip , ( ) % then search across all globalSearch columns
-  const rawQ = (filters.q ?? '').replace(/[,()\%]/g, '').trim();
-  if (rawQ) {
-    const cols = brand.columns.filter((c) => c.globalSearch).map((c) => c.field);
-    if (cols.length) {
-      const e = escIlike(rawQ);
-      q = q.or(cols.map((f) => `${f}.ilike.%${e}%`).join(','));
-    }
-  }
-
-  // Per-column filters
-  for (const col of brand.columns) {
-    const val = filters[col.field];
-    if (!val) continue;
-
-    if (col.filter === 'search') {
-      const v = col.field === 'customer_mobile' ? cleanPhone(val) : val;
-      q = q.ilike(col.field, `%${escIlike(v)}%`);
-    } else if (col.filter === 'select') {
-      if (col.type === 'boolean') {
-        // Paid → true, Unpaid → false
-        q = q.eq(col.field, val === 'Paid');
-      } else {
-        q = q.eq(col.field, val);
-      }
-    }
-    // dateRange columns are handled via dateFrom/dateTo below
-  }
-
-  // Date range — always applies to brand.dateField
-  if (filters.dateFrom) q = q.gte(brand.dateField, filters.dateFrom);
-  if (filters.dateTo) q = q.lte(brand.dateField, filters.dateTo);
-
-  // Sort
   if (filters.sort) {
     const [field, dir] = filters.sort.split(':');
     if (field) q = q.order(field, { ascending: dir !== 'desc' });
@@ -88,4 +86,34 @@ export async function queryBrand(
     count: count ?? 0,
     error: error?.message ?? null,
   };
+}
+
+// Returns just the count — used by SummaryCards for parallel count queries.
+export async function countBrand(
+  supabase: SupabaseClient,
+  brand: BrandConfig,
+  filters: Filters,
+): Promise<number> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let q: any = supabase.from(brand.table).select('*', { count: 'exact', head: true });
+  q = applyFilters(q, brand, filters);
+  const { count, error } = await q;
+  return error ? 0 : (count ?? 0);
+}
+
+// Samsung RPC — returns plan names sorted by count desc.
+export async function samsungPlanCounts(
+  supabase: SupabaseClient,
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<{ plan_name: string; total: number }[]> {
+  const { data, error } = await supabase.rpc('samsung_plan_counts', {
+    date_from: dateFrom ?? null,
+    date_to: dateTo ?? null,
+  });
+  if (error || !data) return [];
+  return (data as { plan_name: string; total: number | bigint }[]).map((r) => ({
+    plan_name: r.plan_name,
+    total: Number(r.total),
+  }));
 }
