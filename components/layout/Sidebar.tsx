@@ -95,7 +95,7 @@ export default function Sidebar({ isAdmin, mobileOpen, onMobileClose }: Props) {
             <TrendingUp size={18} className="text-white" />
           </div>
           {!collapsed && (
-            <span className="text-[17px] font-semibold text-ink">Ops Dashboard</span>
+            <span className="text-[17px] font-semibold text-ink">LookupDost</span>
           )}
         </div>
 
@@ -127,7 +127,7 @@ export default function Sidebar({ isAdmin, mobileOpen, onMobileClose }: Props) {
                 <div className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-primary">
                   <TrendingUp size={16} className="text-white" />
                 </div>
-                <span className="text-[16px] font-semibold text-ink">Ops Dashboard</span>
+                <span className="text-[16px] font-semibold text-ink">LookupDost</span>
               </div>
               <button
                 onClick={onMobileClose}

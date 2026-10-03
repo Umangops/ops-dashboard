@@ -49,7 +49,7 @@ export default function Header({ fullName, role, onMenuClick }: Props) {
           <div className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-primary">
             <TrendingUp size={16} className="text-white" />
           </div>
-          <span className="text-[16px] font-semibold text-ink">Ops Dashboard</span>
+          <span className="text-[16px] font-semibold text-ink">LookupDost</span>
         </div>
       </div>
 

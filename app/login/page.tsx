@@ -48,7 +48,7 @@ export default function LoginPage() {
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[10px] bg-primary">
             <TrendingUp size={24} className="text-white" />
           </div>
-          <h1 className="text-[22px] font-semibold text-ink">Ops Dashboard</h1>
+          <h1 className="text-[22px] font-semibold text-ink">LookupDost</h1>
           <p className="mt-1 text-sm text-ink-3">Sign in to your account</p>
         </div>
 

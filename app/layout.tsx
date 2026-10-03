@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Ops Dashboard",
+  title: "LookupDost",
   description: "Operations Dashboard — Hitachi · Godrej · Samsung",
 };
 
