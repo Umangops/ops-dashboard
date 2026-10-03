@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Upload,
   FileText,
@@ -8,8 +8,9 @@ import {
   AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 import Modal from '@/components/ui/Modal';
-import { importExcelAction } from '@/app/actions/importExcel';
+import { importExcel } from '@/lib/import';
 import type { ImportResult } from '@/lib/import';
 import type { BrandConfig } from '@/lib/brands/types';
 
@@ -86,6 +87,7 @@ export default function ImportDialog({
   userId,
   userName,
 }: Props) {
+  const supabase = useMemo(() => createClient(), []);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [isDragOver, setIsDragOver] = useState(false);
@@ -110,18 +112,6 @@ export default function ImportDialog({
     onClose();
   }, [phase, reset, onClose]);
 
-  // Fake progress animation while the server processes the file
-  useEffect(() => {
-    if (phase !== 'processing') return;
-    const id = setInterval(() => {
-      setProgress((prev) => {
-        if (prev.pct >= 85) return prev;
-        return { msg: prev.msg, pct: Math.min(prev.pct + 1, 85) };
-      });
-    }, 600);
-    return () => clearInterval(id);
-  }, [phase]);
-
   const processFile = useCallback(
     async (file: File) => {
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
@@ -132,15 +122,16 @@ export default function ImportDialog({
       }
       setFileName(file.name);
       setPhase('processing');
-      setProgress({ msg: 'Processing on server…', pct: 5 });
+      setProgress({ msg: 'Reading file…', pct: 5 });
       try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('brandKey', brand.key);
-        formData.append('userId', userId);
-        formData.append('userName', userName);
-        const res = await importExcelAction(formData);
-        setProgress({ msg: 'Done!', pct: 100 });
+        const res = await importExcel(
+          file,
+          brand,
+          supabase,
+          userId,
+          userName,
+          (msg, pct) => setProgress({ msg, pct }),
+        );
         setResult(res);
         setPhase('done');
       } catch (err) {
@@ -150,7 +141,7 @@ export default function ImportDialog({
         setPhase('error');
       }
     },
-    [brand.key, userId, userName],
+    [brand, supabase, userId, userName],
   );
 
   const handleDrop = useCallback(
