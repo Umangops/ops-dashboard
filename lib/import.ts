@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BrandConfig } from './brands/types';
+import { toText, parseDate, parseBool, normaliseHeader } from './clean';
 
 export interface ImportResult {
   total: number;
@@ -11,10 +12,6 @@ export interface ImportResult {
 
 export type ProgressFn = (msg: string, pct: number) => void;
 
-// Runs XLSX parsing + Supabase writes in a background Web Worker (/import-worker.js)
-// so the browser main thread stays fully responsive during large file imports.
-// The worker loads SheetJS from /xlsx.full.min.js (self-hosted, cached after first load).
-
 export async function importExcel(
   file: File,
   brand: BrandConfig,
@@ -23,61 +20,156 @@ export async function importExcel(
   userName: string,
   onProgress?: ProgressFn,
 ): Promise<ImportResult> {
-  // Gather credentials before spawning worker
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const { data: { session } } = await supabase.auth.getSession();
-  const accessToken = session?.access_token ?? '';
+  onProgress?.('Reading file…', 5);
 
-  // Read file bytes (fast, async — returns immediately after buffering)
+  // Dynamic import so SheetJS (~1 MB) is only bundled on demand
+  const XLSX = await import('xlsx');
   const buffer = await file.arrayBuffer();
 
-  return new Promise((resolve, reject) => {
-    // Static worker at /import-worker.js — no bundler magic required
-    const worker = new Worker('/import-worker.js');
+  // Step 1: read only sheet metadata — no cell parsing, near-zero memory cost
+  const bookMeta = XLSX.read(buffer, { bookSheets: true });
 
-    worker.postMessage(
-      {
-        buffer,
-        supabaseUrl,
-        anonKey,
-        accessToken,
-        sheetName: brand.sheetName,
-        table: brand.table,
-        columns: brand.columns.map((c) => ({
-          field: c.field,
-          header: c.header,
-          type: c.type,
-          required: c.required ?? false,
-        })),
-        ignoredHeaders: brand.ignoredHeaders ?? [],
-        fileName: file.name,
-        userId,
-        userName,
-        brandKey: brand.key,
-      },
-      [buffer], // transfer ownership — zero-copy, no serialization overhead
+  // Case-insensitive sheet lookup; fall back to first sheet
+  const sheetName =
+    bookMeta.SheetNames.find(
+      (n) => n.trim().toLowerCase() === brand.sheetName.toLowerCase(),
+    ) ?? bookMeta.SheetNames[0];
+
+  if (!sheetName) throw new Error('No sheets found in the workbook.');
+
+  // Step 2: parse ONLY the target sheet — skips other large sheets entirely
+  const wb = XLSX.read(buffer, {
+    sheets: sheetName,
+    cellDates: true,
+    cellFormula: false,
+    cellHTML: false,
+    cellStyles: false,
+    bookVBA: false,
+  });
+
+  const ws = wb.Sheets[sheetName];
+  onProgress?.('Parsing rows…', 10);
+
+  // raw:true keeps numbers as numbers (important: phone/code cols stored as numeric in Excel)
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
+    raw: true,
+    defval: null,
+  });
+
+  if (rows.length === 0) {
+    return { total: 0, inserted: 0, updated: 0, skipped: 0, skippedRows: [] };
+  }
+
+  onProgress?.('Validating headers…', 15);
+
+  // Build normalised file-header → DB-field map
+  const headerToField = new Map<string, string>();
+  for (const col of brand.columns) {
+    headerToField.set(normaliseHeader(col.header), col.field);
+  }
+  const ignoredNorm = new Set((brand.ignoredHeaders ?? []).map(normaliseHeader));
+
+  // Validate: all required columns must appear in the file
+  const fileHeaders = Object.keys(rows[0]).map(normaliseHeader);
+  const missing = brand.columns
+    .filter((c) => c.required)
+    .filter((c) => !fileHeaders.includes(normaliseHeader(c.header)));
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required columns: ${missing.map((c) => c.header).join(', ')}`,
+    );
+  }
+
+  onProgress?.('Processing rows…', 20);
+
+  // Map Excel rows → DB records; last row with the same activation_code wins (dedup)
+  const recordMap = new Map<string, Record<string, unknown>>();
+  const skippedRows: Record<string, unknown>[] = [];
+
+  for (const row of rows) {
+    const record: Record<string, unknown> = {};
+    const raw: Record<string, unknown> = {};
+
+    for (const [rawKey, rawVal] of Object.entries(row)) {
+      const normKey = normaliseHeader(rawKey);
+      const field = headerToField.get(normKey);
+
+      if (field) {
+        const col = brand.columns.find((c) => c.field === field)!;
+        if (col.type === 'date') {
+          record[field] = parseDate(rawVal);
+        } else if (col.type === 'boolean') {
+          record[field] = parseBool(rawVal);
+        } else {
+          record[field] = toText(rawVal);
+        }
+      } else if (!ignoredNorm.has(normKey) && normKey !== '') {
+        // Preserve extra columns in raw jsonb
+        raw[rawKey] =
+          rawVal instanceof Date ? rawVal.toISOString().slice(0, 10) : rawVal;
+      }
+    }
+
+    // Skip rows that have no activation_code (Plan ID)
+    const code = record['activation_code'];
+    if (!code) {
+      skippedRows.push(row);
+      continue;
+    }
+
+    record['raw'] = Object.keys(raw).length > 0 ? raw : null;
+    recordMap.set(String(code), record);
+  }
+
+  const records = Array.from(recordMap.values());
+  const BATCH = 500;
+  let inserted = 0;
+  let updated = 0;
+
+  for (let i = 0; i < records.length; i += BATCH) {
+    const batch = records.slice(i, i + BATCH);
+    const batchCodes = batch.map((r) => String(r['activation_code']));
+    const pct = 20 + Math.round((i / Math.max(records.length, 1)) * 70);
+    onProgress?.(
+      `Uploading rows ${i + 1}–${Math.min(i + BATCH, records.length)}…`,
+      pct,
     );
 
-    worker.onmessage = ({ data }) => {
-      switch (data.type) {
-        case 'progress':
-          onProgress?.(data.msg, data.pct);
-          break;
-        case 'done':
-          worker.terminate();
-          resolve(data.result as ImportResult);
-          break;
-        case 'error':
-          worker.terminate();
-          reject(new Error(data.message));
-          break;
-      }
-    };
+    // Count how many codes in this batch already exist (to split insert vs update count)
+    const { count: existCount } = await supabase
+      .from(brand.table)
+      .select('*', { count: 'exact', head: true })
+      .in('activation_code', batchCodes);
 
-    worker.onerror = (err) => {
-      worker.terminate();
-      reject(new Error(err.message ?? 'Worker failed to start'));
-    };
+    const { error } = await supabase
+      .from(brand.table)
+      .upsert(
+        batch.map((r) => ({ ...r, updated_at: new Date().toISOString() })),
+        { onConflict: 'activation_code' },
+      );
+
+    if (error) throw new Error(error.message);
+
+    const exist = existCount ?? 0;
+    updated += exist;
+    inserted += batch.length - exist;
+  }
+
+  onProgress?.('Saving import record…', 95);
+
+  await supabase.from('imports').insert({
+    brand: brand.key,
+    file_name: file.name,
+    total_rows: records.length,
+    inserted,
+    updated,
+    skipped: skippedRows.length,
+    uploaded_by: userId,
+    uploaded_by_name: userName,
+    status: 'completed',
   });
+
+  onProgress?.('Done!', 100);
+
+  return { total: records.length, inserted, updated, skipped: skippedRows.length, skippedRows };
 }
