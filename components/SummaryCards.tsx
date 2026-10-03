@@ -9,11 +9,13 @@ import {
   Clock,
   Tag,
   MoreHorizontal,
+  AlertCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { countBrand, samsungPlanCounts } from '@/lib/query';
-import type { BrandConfig, Tone } from '@/lib/brands/types';
+import { countBrand, samsungPlanCounts, statusGroups } from '@/lib/query';
+import type { StatusGroup } from '@/lib/query';
+import type { BrandConfig, LiveStatusSummary, Tone } from '@/lib/brands/types';
 
 // ─── tone style map ───────────────────────────────────────────────────────────
 
@@ -48,12 +50,10 @@ interface CardDef {
 function Card({
   card,
   selected,
-  snap,
   onClick,
 }: {
   card: CardDef;
   selected: boolean;
-  snap: boolean;
   onClick: () => void;
 }) {
   const ts = toneMap[card.tone];
@@ -62,28 +62,21 @@ function Card({
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col rounded-[10px] bg-surface p-4 text-left transition-all hover:shadow-sm active:scale-[0.98] ${
-        snap ? 'w-[160px] shrink-0 snap-start' : 'w-full'
-      }`}
+      className="flex flex-col rounded-[10px] bg-surface p-4 text-left transition-all hover:shadow-sm active:scale-[0.98]"
       style={{
         border: selected ? `2px solid ${ts.border}` : '1px solid #E5E7EB',
         boxShadow: selected ? `0 0 0 3px ${ts.bg}` : undefined,
       }}
     >
-      {/* icon tile */}
       <div
         className="flex h-9 w-9 items-center justify-center rounded-[8px]"
         style={{ backgroundColor: ts.bg }}
       >
         <Icon size={18} style={{ color: ts.color }} />
       </div>
-
-      {/* label */}
       <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-ink-3 leading-tight">
         {card.label}
       </p>
-
-      {/* count */}
       <p
         className="mt-1 text-3xl font-bold leading-none tabular-nums"
         style={{ color: ts.color }}
@@ -94,13 +87,9 @@ function Card({
   );
 }
 
-function CardSkeleton({ snap }: { snap: boolean }) {
+function CardSkeleton() {
   return (
-    <div
-      className={`rounded-[10px] border border-line bg-surface p-4 ${
-        snap ? 'w-[160px] shrink-0' : 'w-full'
-      }`}
-    >
+    <div className="rounded-[10px] border border-line bg-surface p-4">
       <div className="h-9 w-9 animate-pulse rounded-[8px] bg-subtle" />
       <div className="mt-3 h-2.5 w-20 animate-pulse rounded bg-subtle" />
       <div className="mt-2 h-8 w-14 animate-pulse rounded bg-subtle" />
@@ -121,11 +110,11 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
   const supabase = useMemo(() => createClient(), []);
 
   const isSamsung = brand.key === 'samsung';
+  const isLiveStatus = brand.summary.type === 'live-status';
   const isDynamic = brand.summary.type === 'dynamic';
+
   const statusField = !isDynamic ? brand.summary.field : null;
 
-  // Base filters: URL params minus sort/page/pageSize/statusField
-  // (cards show breakdown by status, so the active status filter must be excluded)
   const paramsKey = searchParams.toString();
   const baseFilters = useMemo(() => {
     const f: Record<string, string> = {};
@@ -136,17 +125,19 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramsKey, statusField]);
 
-  // counts keyed by card id
+  const [liveGroups, setLiveGroups] = useState<StatusGroup[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setCounts({});
+    setError(null);
 
+    // ── Samsung: use the plan_counts RPC ──
     if (isDynamic) {
-      // Samsung — use the RPC (only dateFrom/dateTo filters supported)
       samsungPlanCounts(supabase, baseFilters.dateFrom, baseFilters.dateTo).then((rows) => {
         if (cancelled) return;
         const result: Record<string, number> = {};
@@ -163,7 +154,40 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
       return () => { cancelled = true; };
     }
 
-    // Hitachi / Godrej — parallel count queries (head: true)
+    // ── Live-status: fetch groups from RPC, then count each in parallel ──
+    if (isLiveStatus) {
+      const { field, hiddenKeys } = brand.summary as LiveStatusSummary;
+      (async () => {
+        try {
+          const allGroups = await statusGroups(supabase, brand.table);
+          if (cancelled) return;
+          const groups = allGroups.filter((g) => !hiddenKeys.includes(g.key));
+          setLiveGroups(groups);
+
+          const results = await Promise.all([
+            countBrand(supabase, brand, baseFilters).then((n) => ({ id: '__total', n })),
+            ...groups.map((g) =>
+              countBrand(supabase, brand, { ...baseFilters, [field]: g.key }).then((n) => ({
+                id: g.key,
+                n,
+              })),
+            ),
+          ]);
+          if (cancelled) return;
+          const r: Record<string, number> = {};
+          results.forEach(({ id, n }) => { r[id] = n; });
+          setCounts(r);
+          setLoading(false);
+        } catch (e) {
+          if (cancelled) return;
+          setError(e instanceof Error ? e.message : 'Failed to load counts');
+          setLoading(false);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+
+    // ── Static status (fallback) ──
     const statusCards = (brand.summary as { cards: { label: string; value: string; tone: Tone }[] }).cards;
     const promises = [
       countBrand(supabase, brand, baseFilters).then((n) => ({ id: '__total', n })),
@@ -174,7 +198,6 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
         })),
       ),
     ];
-
     Promise.all(promises).then((results) => {
       if (cancelled) return;
       const r: Record<string, number> = {};
@@ -182,10 +205,9 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
       setCounts(r);
       setLoading(false);
     });
-
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(baseFilters), brand.key, supabase]);
+  }, [JSON.stringify(baseFilters), brand.key, supabase, isLiveStatus, isDynamic]);
 
   // Build card definitions
   const cards = useMemo((): CardDef[] => {
@@ -208,6 +230,25 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
       ];
     }
 
+    if (isLiveStatus) {
+      const { keyTones } = brand.summary as LiveStatusSummary;
+      return [
+        { id: '__total', label: 'Total Plans', tone: 'neutral', Icon: FileText, count: counts['__total'] ?? null },
+        ...liveGroups.map((g) => {
+          const tone = (keyTones[g.key] ?? 'neutral') as Tone;
+          return {
+            id: g.key,
+            label: g.label ?? g.key,
+            tone,
+            Icon: toneIcons[tone] ?? FileText,
+            filterField: statusField ?? undefined,
+            filterValue: g.key,
+            count: counts[g.key] ?? null,
+          };
+        }),
+      ];
+    }
+
     const statusCards = (brand.summary as { cards: { label: string; value: string; tone: Tone }[] }).cards;
     return [
       { id: '__total', label: 'Total Plans', tone: 'neutral', Icon: FileText, count: counts['__total'] ?? null },
@@ -221,18 +262,17 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
         count: counts[c.value] ?? null,
       })),
     ];
-  }, [brand.summary, counts, isDynamic, statusField]);
+  }, [brand.summary, counts, isDynamic, isLiveStatus, liveGroups, statusField]);
 
   const handleClick = useCallback(
     (card: CardDef) => {
       const p = new URLSearchParams(searchParams.toString());
       p.delete('page');
       if (!card.filterField) {
-        // Total: clear status filter
         if (statusField) p.delete(statusField);
       } else {
         const current = p.get(card.filterField);
-        if (current === card.filterValue) p.delete(card.filterField); // toggle off
+        if (current === card.filterValue) p.delete(card.filterField);
         else p.set(card.filterField, card.filterValue!);
       }
       router.replace(`${pathname}?${p.toString()}`);
@@ -242,20 +282,21 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
 
   const activeFilterValue = statusField ? (searchParams.get(statusField) ?? null) : null;
   const samsungActive = searchParams.get('plan_name') ?? null;
+  const skeletonCount = isSamsung ? 5 : 3;
 
-  // Layout class
-  const containerCls = isSamsung
-    ? 'grid grid-cols-2 md:grid-cols-3 gap-3'
-    : 'grid grid-cols-2 md:grid-cols-3 gap-3';
-
-  const skeletonCount = brand.key === 'samsung' ? 5 : 3;
+  if (error) {
+    return (
+      <div className="flex items-center gap-2 rounded-[10px] border border-line bg-surface px-4 py-3 text-sm text-danger">
+        <AlertCircle size={16} />
+        {error}
+      </div>
+    );
+  }
 
   return (
-    <div className={containerCls}>
+    <div className="cards-grid">
       {loading
-        ? Array.from({ length: skeletonCount }).map((_, i) => (
-            <CardSkeleton key={i} snap={false} />
-          ))
+        ? Array.from({ length: skeletonCount }).map((_, i) => <CardSkeleton key={i} />)
         : cards.map((card) => {
             let selected = false;
             if (isSamsung) {
@@ -268,7 +309,6 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
                 key={card.id}
                 card={card}
                 selected={selected}
-                snap={false}
                 onClick={() => handleClick(card)}
               />
             );

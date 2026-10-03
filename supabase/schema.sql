@@ -135,3 +135,38 @@ do $$ declare t text; begin
     execute format('create policy "admin delete %1$s" on %1$s for delete to authenticated using (is_admin());', t);
   end loop;
 end $$;
+
+-- ───────── Dynamic status groups (Hitachi / Godrej) ─────────
+alter table hitachi_records
+  add column if not exists remarks_key text
+    generated always as (lower(regexp_replace(btrim(remarks), '\s+', ' ', 'g'))) stored;
+
+alter table godrej_records
+  add column if not exists remarks_key text
+    generated always as (lower(regexp_replace(btrim(remarks), '\s+', ' ', 'g'))) stored;
+
+create index if not exists hit_remarks_key on hitachi_records (remarks_key);
+create index if not exists god_remarks_key on godrej_records (remarks_key);
+
+create or replace function status_groups(p_table text)
+returns table(key text, label text, total bigint)
+language plpgsql stable security invoker set search_path = public as $$
+begin
+  if p_table not in ('hitachi_records', 'godrej_records') then
+    raise exception 'Table % is not allowed', p_table;
+  end if;
+  return query execute format(
+    $f$
+    select
+      remarks_key                                    as key,
+      mode() within group (order by remarks)         as label,
+      count(*)::bigint                               as total
+    from %I
+    where remarks_key is not null and remarks_key <> ''
+    group by remarks_key
+    order by total desc
+    $f$,
+    p_table
+  );
+end;
+$$;

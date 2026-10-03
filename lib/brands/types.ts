@@ -3,14 +3,15 @@ export type Tone = 'info' | 'success' | 'warning' | 'danger' | 'neutral';
 
 export interface BrandColumn {
   field: string;
-  header: string;         // exact Excel header text
-  label: string;          // shown in UI
+  header: string;
+  label: string;
   type: 'text' | 'date' | 'status' | 'boolean';
   filter: FilterType;
-  required?: boolean;     // must exist in uploaded file
-  copyable?: boolean;     // show one-click copy icon
-  globalSearch?: boolean; // included in global search bar
-  options?: string[];     // fixed values for select filter
+  required?: boolean;
+  copyable?: boolean;
+  globalSearch?: boolean;
+  options?: string[];
+  keyField?: string;   // name of the generated normalised-key column (e.g. 'remarks_key')
 }
 
 export interface StatusSummary {
@@ -25,6 +26,14 @@ export interface DynamicSummary {
   maxCards: number;
 }
 
+export interface LiveStatusSummary {
+  type: 'live-status';
+  field: string;        // e.g. 'remarks'
+  keyField: string;     // e.g. 'remarks_key'
+  hiddenKeys: string[]; // normalised keys to hide from cards (still visible in table/filter)
+  keyTones: Record<string, Tone>; // normalised key → tone
+}
+
 export interface BrandConfig {
   key: 'hitachi' | 'godrej' | 'samsung';
   label: string;
@@ -34,6 +43,6 @@ export interface BrandConfig {
   columns: BrandColumn[];
   ignoredHeaders?: string[];
   statusTones: Record<string, Tone>;
-  summary: StatusSummary | DynamicSummary;
+  summary: StatusSummary | DynamicSummary | LiveStatusSummary;
   mobileFields: string[];
 }

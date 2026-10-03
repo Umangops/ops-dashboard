@@ -14,7 +14,8 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { queryBrand } from '@/lib/query';
+import { queryBrand, statusGroups } from '@/lib/query';
+import type { StatusGroup } from '@/lib/query';
 import type { BrandColumn, BrandConfig, Tone } from '@/lib/brands/types';
 import RecordDrawer from '@/components/RecordDrawer';
 import { cn } from '@/lib/utils';
@@ -69,18 +70,25 @@ function ColFilter({
   col,
   value,
   onChange,
+  dynamicOptions,
 }: {
   col: BrandColumn;
   value: string;
   onChange: (v: string) => void;
+  dynamicOptions?: { key: string; label: string }[];
 }) {
   const [local, setLocal] = useState(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { setLocal(value); }, [value]);
 
+  // Build option list: dynamic (keyField column) or static (options array)
+  const opts: { key: string; label: string }[] = col.keyField
+    ? (dynamicOptions ?? [])
+    : (col.options?.map((o) => ({ key: o, label: o })) ?? []);
+
   // select — instant update
-  if (col.filter === 'select' && col.options && col.options.length > 0) {
+  if (col.filter === 'select' && opts.length > 0) {
     return (
       <div className="relative">
         <select
@@ -89,8 +97,8 @@ function ColFilter({
           className="h-7 w-full appearance-none rounded border border-line bg-surface px-2 pr-5 text-xs text-ink outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
         >
           <option value="">All</option>
-          {col.options.map((o) => (
-            <option key={o} value={o}>{o}</option>
+          {opts.map((o) => (
+            <option key={o.key} value={o.key}>{o.label}</option>
           ))}
         </select>
         <ChevronDown
@@ -180,7 +188,17 @@ export default function DataTable({ brand }: DataTableProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
+  const [statusOpts, setStatusOpts] = useState<{ key: string; label: string }[]>([]);
   const supabase = useMemo(() => createClient(), []);
+
+  // Fetch dynamic status options once per brand (for keyField columns)
+  useEffect(() => {
+    const liveCol = brand.columns.find((c) => c.keyField);
+    if (!liveCol) return;
+    statusGroups(supabase, brand.table).then((groups: StatusGroup[]) => {
+      setStatusOpts(groups.map((g) => ({ key: g.key, label: g.label })));
+    });
+  }, [brand.key, supabase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;
@@ -288,6 +306,7 @@ export default function DataTable({ brand }: DataTableProps) {
                       col={col}
                       value={filters[col.field] ?? ''}
                       onChange={(v) => setParam(col.field, v || null)}
+                      dynamicOptions={col.keyField ? statusOpts : undefined}
                     />
                   </th>
                 );

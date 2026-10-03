@@ -5,7 +5,7 @@ export const godrej: BrandConfig = {
   label: 'Godrej',
   table: 'godrej_records',
   sheetName: 'Godrej',
-  dateField: 'created_at',   // Godrej has no display date; filter by upload date
+  dateField: 'created_at',
 
   columns: [
     {
@@ -56,7 +56,7 @@ export const godrej: BrandConfig = {
       field: 'payment_status',
       header: 'Payment_Status',
       label: 'Payment Status',
-      type: 'boolean',         // stored as boolean in DB; shown as Paid / Unpaid
+      type: 'boolean',
       filter: 'select',
       options: ['Paid', 'Unpaid'],
     },
@@ -74,7 +74,8 @@ export const godrej: BrandConfig = {
       label: 'Status',
       type: 'status',
       filter: 'select',
-      options: ['Contract Booked', 'Not Booked'],
+      keyField: 'remarks_key',
+      // options populated dynamically from status_groups RPC
     },
     {
       field: 'additional_remarks',
@@ -95,11 +96,18 @@ export const godrej: BrandConfig = {
   },
 
   summary: {
-    type: 'status',
+    type: 'live-status',
     field: 'remarks',
-    cards: [
-      { label: 'Contract Booked', value: 'Contract Booked', tone: 'success' },
-    ],
+    keyField: 'remarks_key',
+    hiddenKeys: ['not booked'],
+    keyTones: {
+      'contract booked':                       'success',
+      'not booked':                            'danger',
+      'found error':                           'danger',
+      'plan cancelled':                        'danger',
+      'shared for booking':                    'warning',
+      'already having 5 year brand warranty':  'info',
+    },
   },
 
   mobileFields: ['customer_name', 'customer_mobile', 'serial_number', 'remarks'],

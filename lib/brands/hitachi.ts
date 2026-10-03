@@ -65,7 +65,8 @@ export const hitachi: BrandConfig = {
       label: 'Status',
       type: 'status',
       filter: 'select',
-      options: ['Plan Active', 'Plan Inactive', 'Pending Payment'],
+      keyField: 'remarks_key',
+      // options populated dynamically from status_groups RPC
     },
     {
       field: 'additional_remarks',
@@ -85,12 +86,15 @@ export const hitachi: BrandConfig = {
   },
 
   summary: {
-    type: 'status',
+    type: 'live-status',
     field: 'remarks',
-    cards: [
-      { label: 'Plan Active',     value: 'Plan Active',     tone: 'success' },
-      { label: 'Pending Payment', value: 'Pending Payment', tone: 'warning' },
-    ],
+    keyField: 'remarks_key',
+    hiddenKeys: ['plan inactive'],
+    keyTones: {
+      'plan active':     'success',
+      'pending payment': 'warning',
+      'plan inactive':   'danger',
+    },
   },
 
   mobileFields: ['customer_name', 'customer_mobile', 'serial_number', 'purchase_date'],

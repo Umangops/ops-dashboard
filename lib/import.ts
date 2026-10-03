@@ -89,6 +89,9 @@ export async function importExcel(
           record[field] = parseDate(rawVal);
         } else if (col.type === 'boolean') {
           record[field] = parseBool(rawVal);
+        } else if (col.type === 'status') {
+          const txt = toText(rawVal);
+          record[field] = txt !== null ? txt.replace(/\s+/g, ' ') : null;
         } else {
           record[field] = toText(rawVal);
         }

@@ -17,6 +17,12 @@ export interface PageResult {
   error: string | null;
 }
 
+export interface StatusGroup {
+  key: string;
+  label: string;
+  total: number;
+}
+
 function escIlike(s: string): string {
   return s.replace(/[%_\\]/g, '\\$&');
 }
@@ -28,7 +34,6 @@ function cleanPhone(s: string): string {
 // Shared filter logic — applied by both queryBrand and countBrand.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function applyFilters(q: any, brand: BrandConfig, filters: Filters): any {
-  // Global search — strip , ( ) % then search across globalSearch columns
   const rawQ = (filters.q ?? '').replace(/[,()\%]/g, '').trim();
   if (rawQ) {
     const cols = brand.columns.filter((c) => c.globalSearch).map((c) => c.field);
@@ -38,7 +43,6 @@ function applyFilters(q: any, brand: BrandConfig, filters: Filters): any {
     }
   }
 
-  // Per-column filters
   for (const col of brand.columns) {
     const val = filters[col.field];
     if (!val) continue;
@@ -46,12 +50,17 @@ function applyFilters(q: any, brand: BrandConfig, filters: Filters): any {
       const v = col.field === 'customer_mobile' ? cleanPhone(val) : val;
       q = q.ilike(col.field, `%${escIlike(v)}%`);
     } else if (col.filter === 'select') {
-      // boolean stored as true/false; status uses ilike so casing/spacing in the DB doesn't break matches
-      q = col.type === 'boolean' ? q.eq(col.field, val === 'Paid') : q.ilike(col.field, val);
+      if (col.type === 'boolean') {
+        q = q.eq(col.field, val === 'Paid');
+      } else if (col.keyField) {
+        // Filter via the generated normalised-key column — handles any casing/spacing in DB
+        q = q.eq(col.keyField, val);
+      } else {
+        q = q.ilike(col.field, val);
+      }
     }
   }
 
-  // Date range — always applies to brand.dateField
   if (filters.dateFrom) q = q.gte(brand.dateField, filters.dateFrom);
   if (filters.dateTo) q = q.lte(brand.dateField, filters.dateTo);
 
@@ -100,6 +109,20 @@ export async function countBrand(
   q = applyFilters(q, brand, filters);
   const { count, error } = await q;
   return error ? 0 : (count ?? 0);
+}
+
+// Returns distinct status groups for Hitachi/Godrej from the status_groups RPC.
+export async function statusGroups(
+  supabase: SupabaseClient,
+  table: string,
+): Promise<StatusGroup[]> {
+  const { data, error } = await supabase.rpc('status_groups', { p_table: table });
+  if (error || !data) return [];
+  return (data as { key: string; label: string; total: bigint | number }[]).map((r) => ({
+    key: r.key,
+    label: r.label,
+    total: Number(r.total),
+  }));
 }
 
 // Samsung RPC — returns plan names sorted by count desc.
