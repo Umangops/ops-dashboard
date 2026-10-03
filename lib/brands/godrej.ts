@@ -99,7 +99,6 @@ export const godrej: BrandConfig = {
     field: 'remarks',
     cards: [
       { label: 'Contract Booked', value: 'Contract Booked', tone: 'success' },
-      { label: 'Not Booked',      value: 'Not Booked',      tone: 'danger'  },
     ],
   },
 
