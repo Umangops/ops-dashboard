@@ -204,6 +204,7 @@ export default function DataTable({ brand }: DataTableProps) {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // Keep stale rows visible while loading — don't blank the table on every search
 
     queryBrand(supabase, brand, filters).then(({ data, count, error }) => {
       if (cancelled) return;
@@ -251,7 +252,13 @@ export default function DataTable({ brand }: DataTableProps) {
   const firstField = brand.columns[0]?.field;
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-[10px] border border-line bg-surface">
+    <div className="relative flex flex-col overflow-hidden rounded-[10px] border border-line bg-surface">
+      {/* Thin loading bar — visible when re-fetching with stale data */}
+      {loading && rows.length > 0 && (
+        <div className="absolute inset-x-0 top-0 z-40 h-0.5 overflow-hidden bg-primary/10">
+          <div className="h-full w-1/3 animate-[slide-right_1s_ease-in-out_infinite] bg-primary" />
+        </div>
+      )}
       {/* Scrollable table */}
       <div className="overflow-auto">
         <table
@@ -315,8 +322,8 @@ export default function DataTable({ brand }: DataTableProps) {
           </thead>
 
           <tbody>
-            {/* ── loading skeleton ── */}
-            {loading && Array.from({ length: 8 }).map((_, i) => (
+            {/* ── loading skeleton — only on initial load (no stale rows yet) ── */}
+            {loading && rows.length === 0 && Array.from({ length: 8 }).map((_, i) => (
               <tr key={i} className="border-b border-line">
                 {brand.columns.map((col) => (
                   <td key={col.field} className="px-4 py-5">
@@ -375,13 +382,13 @@ export default function DataTable({ brand }: DataTableProps) {
               </tr>
             )}
 
-            {/* ── data rows ── */}
-            {!loading && !error && rows.map((row, ri) => (
+            {/* ── data rows — visible even while re-fetching (stale-while-revalidate) ── */}
+            {!error && rows.map((row, ri) => (
               <tr
                 key={(row.id as string) ?? ri}
                 onClick={() => setSelectedRow(row)}
                 className="group cursor-pointer border-b border-line last:border-0 transition-colors hover:bg-canvas"
-                style={{ height: 72 }}
+                style={{ height: 72, opacity: loading ? 0.45 : 1, transition: 'opacity 120ms' }}
               >
                 {brand.columns.map((col) => {
                   const isFirst = col.field === firstField;

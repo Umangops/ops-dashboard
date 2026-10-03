@@ -114,24 +114,20 @@ export async function importExcel(
   }
 
   const records = Array.from(recordMap.values());
-  const BATCH = 500;
-  let inserted = 0;
-  let updated = 0;
+  const BATCH = 1000;
+
+  // One count before upsert — avoids a pre-count query per batch
+  const { count: countBefore } = await supabase
+    .from(brand.table)
+    .select('*', { count: 'exact', head: true });
 
   for (let i = 0; i < records.length; i += BATCH) {
     const batch = records.slice(i, i + BATCH);
-    const batchCodes = batch.map((r) => String(r['activation_code']));
     const pct = 20 + Math.round((i / Math.max(records.length, 1)) * 70);
     onProgress?.(
       `Uploading rows ${i + 1}–${Math.min(i + BATCH, records.length)}…`,
       pct,
     );
-
-    // Count how many codes in this batch already exist (to split insert vs update count)
-    const { count: existCount } = await supabase
-      .from(brand.table)
-      .select('*', { count: 'exact', head: true })
-      .in('activation_code', batchCodes);
 
     const { error } = await supabase
       .from(brand.table)
@@ -141,11 +137,15 @@ export async function importExcel(
       );
 
     if (error) throw new Error(error.message);
-
-    const exist = existCount ?? 0;
-    updated += exist;
-    inserted += batch.length - exist;
   }
+
+  // One count after — derive inserts vs updates without per-batch round trips
+  const { count: countAfter } = await supabase
+    .from(brand.table)
+    .select('*', { count: 'exact', head: true });
+
+  const inserted = Math.max(0, (countAfter ?? 0) - (countBefore ?? 0));
+  const updated = records.length - inserted;
 
   onProgress?.('Saving import record…', 95);
 

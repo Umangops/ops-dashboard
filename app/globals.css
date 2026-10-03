@@ -78,6 +78,12 @@ body {
   to   { transform: translateY(0); }
 }
 
+/* Table re-fetch progress bar */
+@keyframes slide-right {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
 /* Keyboard focus rings — visible on Tab navigation, not on mouse click */
 :focus-visible {
   outline: 2px solid var(--primary);
