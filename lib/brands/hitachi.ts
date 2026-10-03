@@ -89,7 +89,6 @@ export const hitachi: BrandConfig = {
     field: 'remarks',
     cards: [
       { label: 'Plan Active',     value: 'Plan Active',     tone: 'success' },
-      { label: 'Plan Inactive',   value: 'Plan Inactive',   tone: 'danger'  },
       { label: 'Pending Payment', value: 'Pending Payment', tone: 'warning' },
     ],
   },

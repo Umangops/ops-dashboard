@@ -104,13 +104,9 @@ export default async function BrandPage({ params }: Props) {
 }
 
 function CardsSkeleton({ brand }: { brand: string }) {
-  const n = brand === 'hitachi' ? 4 : brand === 'godrej' ? 3 : 5;
-  const cls =
-    brand === 'hitachi'
-      ? 'grid grid-cols-2 md:grid-cols-4 gap-3'
-      : 'grid grid-cols-2 md:grid-cols-3 gap-3';
+  const n = brand === 'samsung' ? 5 : 3;
   return (
-    <div className={cls}>
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
       {Array.from({ length: n }).map((_, i) => (
         <Skeleton key={i} variant="card" />
       ))}

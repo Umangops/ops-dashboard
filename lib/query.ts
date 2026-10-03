@@ -46,7 +46,8 @@ function applyFilters(q: any, brand: BrandConfig, filters: Filters): any {
       const v = col.field === 'customer_mobile' ? cleanPhone(val) : val;
       q = q.ilike(col.field, `%${escIlike(v)}%`);
     } else if (col.filter === 'select') {
-      q = col.type === 'boolean' ? q.eq(col.field, val === 'Paid') : q.eq(col.field, val);
+      // boolean stored as true/false; status uses ilike so casing/spacing in the DB doesn't break matches
+      q = col.type === 'boolean' ? q.eq(col.field, val === 'Paid') : q.ilike(col.field, val);
     }
   }
 

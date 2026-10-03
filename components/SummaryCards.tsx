@@ -246,11 +246,9 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
   // Layout class
   const containerCls = isSamsung
     ? 'grid grid-cols-2 md:grid-cols-3 gap-3'
-    : brand.key === 'godrej'
-    ? 'grid grid-cols-2 md:grid-cols-3 gap-3'
-    : 'grid grid-cols-2 md:grid-cols-4 gap-3';
+    : 'grid grid-cols-2 md:grid-cols-3 gap-3';
 
-  const skeletonCount = brand.key === 'hitachi' ? 4 : brand.key === 'godrej' ? 3 : 5;
+  const skeletonCount = brand.key === 'samsung' ? 5 : 3;
 
   return (
     <div className={containerCls}>
