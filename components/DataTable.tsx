@@ -16,8 +16,18 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { queryBrand } from '@/lib/query';
 import type { BrandColumn, BrandConfig, Tone } from '@/lib/brands/types';
-import Pill from '@/components/ui/Pill';
+import RecordDrawer from '@/components/RecordDrawer';
 import { cn } from '@/lib/utils';
+
+// ─── tone colors (text only — no bubble) ────────────────────────────────────
+
+const toneColor: Record<Tone, string> = {
+  info:    '#4F5FE8',
+  success: '#2E9E5B',
+  warning: '#D4A017',
+  danger:  '#E5252A',
+  neutral: '#4B5563',
+};
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -169,6 +179,7 @@ export default function DataTable({ brand }: DataTableProps) {
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
   const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
@@ -349,7 +360,8 @@ export default function DataTable({ brand }: DataTableProps) {
             {!loading && !error && rows.map((row, ri) => (
               <tr
                 key={(row.id as string) ?? ri}
-                className="group border-b border-line last:border-0 transition-colors hover:bg-canvas"
+                onClick={() => setSelectedRow(row)}
+                className="group cursor-pointer border-b border-line last:border-0 transition-colors hover:bg-canvas"
                 style={{ height: 72 }}
               >
                 {brand.columns.map((col) => {
@@ -367,7 +379,12 @@ export default function DataTable({ brand }: DataTableProps) {
                       )}
                     >
                       {pill ? (
-                        <Pill tone={pill.tone}>{pill.label}</Pill>
+                        <span
+                          className="font-medium"
+                          style={{ color: toneColor[pill.tone] }}
+                        >
+                          {pill.label}
+                        </span>
                       ) : (
                         <div className="flex items-center">
                           <span
@@ -391,6 +408,13 @@ export default function DataTable({ brand }: DataTableProps) {
           </tbody>
         </table>
       </div>
+
+      {/* ── record drawer ── */}
+      <RecordDrawer
+        row={selectedRow}
+        brand={brand}
+        onClose={() => setSelectedRow(null)}
+      />
 
       {/* ── footer ── */}
       {!loading && !error && (

@@ -46,7 +46,7 @@ export const samsung: BrandConfig = {
       field: 'plan_name',
       header: 'display_plan_name',
       label: 'Plan Name',
-      type: 'status',
+      type: 'text',
       filter: 'select',
     },
     {

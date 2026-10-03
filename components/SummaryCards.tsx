@@ -245,7 +245,7 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
 
   // Layout class
   const containerCls = isSamsung
-    ? 'flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1 -mb-1'
+    ? 'grid grid-cols-2 md:grid-cols-3 gap-3'
     : brand.key === 'godrej'
     ? 'grid grid-cols-2 md:grid-cols-3 gap-3'
     : 'grid grid-cols-2 md:grid-cols-4 gap-3';
@@ -256,7 +256,7 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
     <div className={containerCls}>
       {loading
         ? Array.from({ length: skeletonCount }).map((_, i) => (
-            <CardSkeleton key={i} snap={isSamsung} />
+            <CardSkeleton key={i} snap={false} />
           ))
         : cards.map((card) => {
             let selected = false;
@@ -270,7 +270,7 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
                 key={card.id}
                 card={card}
                 selected={selected}
-                snap={isSamsung}
+                snap={false}
                 onClick={() => handleClick(card)}
               />
             );

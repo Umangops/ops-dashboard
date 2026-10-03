@@ -6,6 +6,9 @@ import { createClient } from '@/lib/supabase/server';
 import SummaryCards from '@/components/SummaryCards';
 import FilterBar from '@/components/FilterBar';
 import DataTable from '@/components/DataTable';
+import ImportButton from '@/components/ImportButton';
+import ExportButton from '@/components/ExportButton';
+import MobileRecordList from '@/components/MobileRecordList';
 import Skeleton from '@/components/ui/Skeleton';
 
 interface Props {
@@ -17,8 +20,26 @@ export default async function BrandPage({ params }: Props) {
   const brand = getBrand(brandKey);
   if (!brand) notFound();
 
-  // Latest import for this brand — used for "Last updated" subtitle
   const supabase = await createClient();
+
+  // User identity — used for admin check and import attribution
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data: profile } = user
+    ? await supabase
+        .from('profiles')
+        .select('role, full_name')
+        .eq('id', user.id)
+        .single()
+    : { data: null };
+
+  const isAdmin = profile?.role === 'admin';
+  const userId = user?.id ?? '';
+  const userName = profile?.full_name ?? user?.email ?? 'Unknown';
+
+  // Latest import for this brand — "Last updated" subtitle
   const { data: lastImport } = await supabase
     .from('imports')
     .select('uploaded_by_name, created_at')
@@ -32,6 +53,14 @@ export default async function BrandPage({ params }: Props) {
         lastImport.uploaded_by_name ? ` by ${lastImport.uploaded_by_name}` : ''
       }`
     : null;
+
+  // Export for all users; Import for admins only
+  const actionSlot = (
+    <div className="flex items-center gap-2">
+      <ExportButton brand={brand} />
+      {isAdmin && <ImportButton brand={brand} userId={userId} userName={userName} />}
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,30 +81,64 @@ export default async function BrandPage({ params }: Props) {
         <SummaryCards brand={brand} />
       </Suspense>
 
-      {/* Filter bar */}
+      {/* Filter bar + Import button */}
       <Suspense fallback={<FilterBarSkeleton />}>
-        <FilterBar brand={brand} />
+        <FilterBar brand={brand} actionSlot={actionSlot} />
       </Suspense>
 
-      {/* Records table */}
-      <Suspense fallback={<TableSkeleton cols={brand.columns.length} />}>
-        <DataTable brand={brand} />
-      </Suspense>
+      {/* Desktop table — hidden on mobile */}
+      <div className="hidden md:block">
+        <Suspense fallback={<TableSkeleton cols={brand.columns.length} />}>
+          <DataTable brand={brand} />
+        </Suspense>
+      </div>
+
+      {/* Mobile card list — hidden on desktop */}
+      <div className="md:hidden">
+        <Suspense fallback={<MobileCardsSkeleton />}>
+          <MobileRecordList brand={brand} />
+        </Suspense>
+      </div>
     </div>
   );
 }
 
 function CardsSkeleton({ brand }: { brand: string }) {
   const n = brand === 'hitachi' ? 4 : brand === 'godrej' ? 3 : 5;
-  const cls = brand === 'hitachi'
-    ? 'grid grid-cols-2 md:grid-cols-4 gap-3'
-    : brand === 'godrej'
-    ? 'grid grid-cols-2 md:grid-cols-3 gap-3'
-    : 'flex gap-3 overflow-x-auto pb-1';
+  const cls =
+    brand === 'hitachi'
+      ? 'grid grid-cols-2 md:grid-cols-4 gap-3'
+      : 'grid grid-cols-2 md:grid-cols-3 gap-3';
   return (
     <div className={cls}>
       {Array.from({ length: n }).map((_, i) => (
         <Skeleton key={i} variant="card" />
+      ))}
+    </div>
+  );
+}
+
+function MobileCardsSkeleton() {
+  return (
+    <div className="flex flex-col gap-3">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="rounded-[10px] border border-line bg-surface p-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="mb-1 h-2.5 w-12 animate-pulse rounded bg-subtle" />
+              <div className="h-4 w-32 animate-pulse rounded bg-subtle" />
+            </div>
+            <div className="h-7 w-24 animate-pulse rounded-full bg-subtle" />
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {Array.from({ length: 4 }).map((_, j) => (
+              <div key={j}>
+                <div className="mb-1 h-2 w-12 animate-pulse rounded bg-subtle" />
+                <div className="h-4 w-20 animate-pulse rounded bg-subtle" />
+              </div>
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   );
