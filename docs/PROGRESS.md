@@ -36,7 +36,7 @@
 - **3 brand pages** (`/hitachi`, `/godrej`, `/samsung`) — each loaded from its brand config file in `lib/brands/`.
 - **Records table** — sortable columns, sticky header, paginated display.
 - **Column search** — per-field text search boxes above each searchable column.
-- **Global search** — single search box that searches all `globalSearch: true` fields at once.
+- **Global search** — searches the entire record (all columns + raw jsonb) via a `search_text` trigger-maintained column with `ILIKE`. Hitachi and Godrej fully working; Samsung backfill pending (see Next Steps).
 - **Date range filter** — calendar picker for date columns.
 - **Select filter** — dropdown for status/boolean columns.
 - **Dynamic summary cards (Hitachi & Godrej)** — cards are generated live from the database using the `status_groups` RPC; they reflect whatever status values are actually in the `remarks` column. "Plan Inactive" (Hitachi) and "Not Booked" (Godrej) cards are hidden from the top but those rows still count in Total and appear in the table.
@@ -97,6 +97,9 @@
 | 3 Oct | "Not Booked" card appeared on Godrej | Not included in `hiddenKeys` | Added `'not booked'` to `hiddenKeys` in `lib/brands/godrej.ts` | `a633be4` |
 | 3 Oct | Browser froze ("Page Unresponsive") on large import | `XLSX.read` blocked the main thread for 25K × 46 cells | Tried Web Worker via bundler → FAILED (`fd695a7`). Tried Server Action → FAILED (`b89c916`). Tried static `/import-worker.js` → committed before testing, reverted | `d0fb96a` |
 | 3 Oct | "Aw, Snap! Out of Memory" on every import | `XLSX.read` without `sheets` option parsed all 3 sheets (193K rows total, including Samsung's 149K) | Added two-pass read: `bookSheets:true` then `sheets:targetName` + lean options | `876544d` |
+| 9 Oct | Global search missed store/distributor names | `globalSearch` only covered a few explicit columns; store_name and other fields in raw jsonb were invisible | Added `search_text` trigger column (lower of all columns + raw::text) on all 3 tables; changed `lib/query.ts` to `ilike('search_text', '%...%')` | — |
+| 9 Oct | Generated column rejected with "not immutable" | `date::text` and `jsonb::text` casts are STABLE not IMMUTABLE in PostgreSQL | Switched to BEFORE INSERT OR UPDATE trigger function (no immutability constraint) + manual backfill UPDATE | — |
+| 9 Oct | Supabase "No space left on device" on Samsung GIN index | GIN trigram indexes on 149K-row table exhausted Free plan 500 MB disk | Dropped all 3 `search_trgm` GIN indexes; search_text ILIKE works via sequential scan (acceptable speed) | — |
 
 ---
 
@@ -114,12 +117,33 @@ All SQL was run in the Supabase SQL Editor. Safe to re-run (idempotent).
 
 > **Not yet run:** Samsung does not have a `remarks_key` column or `status_groups` integration (Samsung uses `plan_name` for its summary cards instead).
 
+5. **`search_text` trigger column** (9 Oct) — added plain `text` column to all 3 tables. BEFORE INSERT OR UPDATE trigger populates it as `lower(all columns || ' ' || raw::text)`. Hitachi and Godrej backfilled. Samsung backfill pending (DB quota exhausted mid-session). GIN trigram indexes (`hit_search_trgm`, `god_search_trgm`, `sam_search_trgm`) were created then **dropped** to reclaim disk space on Free plan. Full SQL in `supabase/schema.sql`.
+
 ---
 
 ## 6. Next Steps (in priority order)
 
-1. **Verify Hitachi and Godrej imports work end-to-end** after the `sheets` OOM fix — test with the real Excel file on localhost and then in production.
-2. **Check Supabase database storage** before attempting any Samsung import — Free plan limit is 500 MB. Run `SELECT pg_size_pretty(pg_database_size(current_database()))` in the SQL Editor.
+1. **Samsung `search_text` backfill** — DB was read-only (compute quota exhausted) during session. Once DB renews, run in Supabase SQL Editor:
+   ```sql
+   drop index if exists hit_search_trgm;
+   drop index if exists god_search_trgm;
+   drop index if exists sam_search_trgm;
+   ```
+   Then:
+   ```sql
+   update samsung_records set search_text = lower(
+     coalesce(activation_code,    '') || ' ' ||
+     coalesce(purchase_date::text,'') || ' ' ||
+     coalesce(store_name,         '') || ' ' ||
+     coalesce(branch_name,        '') || ' ' ||
+     coalesce(model_name,         '') || ' ' ||
+     coalesce(serial_number,      '') || ' ' ||
+     coalesce(plan_name,          '') || ' ' ||
+     coalesce(raw::text,          '')
+   ) where search_text is null;
+   ```
+   GIN indexes dropped to save space (Free plan 500 MB limit); ILIKE on search_text works without them.
+2. **Verify Hitachi and Godrej imports work end-to-end** after the `sheets` OOM fix — test with the real Excel file on localhost and then in production.
 3. **Samsung import strategy** — 149K rows cannot be imported from the browser. Options: (a) chunk the Excel into multiple CSV files and import each separately, (b) have the user upload to Supabase Storage and trigger a scheduled function, (c) use the existing `/public/import-worker.js` static Web Worker (already written, needs testing). Decide before proceeding.
 4. **Users / admin page** — if multiple staff members need separate logins or roles, add a simple user management page. Currently one shared login.
 5. **`middleware` → `proxy` migration** — pre-existing deprecation warning from Next.js 16. Run `npx @next/codemod@canary middleware-to-proxy .` when convenient; low priority.
@@ -136,3 +160,11 @@ Long session fixing two main issues:
 - **Dynamic summary cards:** Added `remarks_key` generated column and `status_groups` RPC to Supabase. Updated `SummaryCards.tsx` to call the RPC and render cards dynamically. Hidden "Plan Inactive" (Hitachi) and "Not Booked" (Godrej) from card display.
 - **Import OOM crash:** Root cause found — `XLSX.read` was parsing all 3 sheets (including Samsung's 149K rows) on every import. Fixed with two-pass `bookSheets` + `sheets:targetName` approach. Also confirmed Web Worker (bundler) and Server Action routes are dead ends. Shipped commit `876544d`.
 - Added `test-data/` to `.gitignore` and created `scripts/test-import.mjs` for local profiling.
+
+### 2026-10-09
+**Global search overhaul** — searching "croma" on Samsung or "Hindustan Distributor" on Godrej was returning nothing because store names were only in the `raw` jsonb column, invisible to the column-by-column OR query.
+- Added `search_text text` column to all 3 tables, maintained by BEFORE INSERT OR UPDATE trigger (`lower(all columns || raw::text)`).
+- Changed `lib/query.ts` global search from multi-column OR to single `ilike('search_text', '%...%')`.
+- Added `globalSearch: true` to Samsung's `store_name`, `branch_name`, `model_name`, `plan_name` columns.
+- **Issues hit during SQL:** (a) Generated column approach failed — `date::text` is STABLE not IMMUTABLE; switched to trigger. (b) GIN trigram indexes on Samsung (149K rows) caused "No space left on device" — Free plan 500 MB disk exhausted. Dropped all 3 GIN indexes; ILIKE sequential scan is acceptable. (c) DB compute quota exhausted mid-session — Samsung backfill UPDATE (`where search_text is null`) still pending.
+- Hitachi and Godrej global search verified working on localhost. Samsung search works for future imports (trigger is live); backfill needed for existing 149K rows.

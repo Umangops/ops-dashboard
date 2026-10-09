@@ -148,6 +148,119 @@ alter table godrej_records
 create index if not exists hit_remarks_key on hitachi_records (remarks_key);
 create index if not exists god_remarks_key on godrej_records (remarks_key);
 
+-- ───────── Full-record search_text (covers every column + raw jsonb) ─────────
+-- plain column maintained by BEFORE INSERT OR UPDATE triggers (generated columns
+-- cannot use date::text or jsonb::text because those casts are STABLE, not IMMUTABLE).
+-- GIN trigram index makes ILIKE '%...%' fast on large tables.
+-- Safe to re-run: ADD COLUMN IF NOT EXISTS, CREATE OR REPLACE, DROP/CREATE TRIGGER.
+
+alter table hitachi_records add column if not exists search_text text;
+alter table godrej_records  add column if not exists search_text text;
+alter table samsung_records add column if not exists search_text text;
+
+create index if not exists hit_search_trgm on hitachi_records using gin (search_text gin_trgm_ops);
+create index if not exists god_search_trgm on godrej_records  using gin (search_text gin_trgm_ops);
+create index if not exists sam_search_trgm on samsung_records using gin (search_text gin_trgm_ops);
+
+create or replace function hitachi_set_search_text() returns trigger language plpgsql as $$
+begin
+  new.search_text := lower(
+    coalesce(new.activation_code,    '') || ' ' ||
+    coalesce(new.purchase_date::text,'') || ' ' ||
+    coalesce(new.customer_name,      '') || ' ' ||
+    coalesce(new.customer_mobile,    '') || ' ' ||
+    coalesce(new.serial_number,      '') || ' ' ||
+    coalesce(new.crm_id,             '') || ' ' ||
+    coalesce(new.remarks,            '') || ' ' ||
+    coalesce(new.additional_remarks, '') || ' ' ||
+    coalesce(new.raw::text,          '')
+  );
+  return new;
+end; $$;
+drop trigger if exists tg_hitachi_search on hitachi_records;
+create trigger tg_hitachi_search
+  before insert or update on hitachi_records
+  for each row execute function hitachi_set_search_text();
+
+create or replace function godrej_set_search_text() returns trigger language plpgsql as $$
+begin
+  new.search_text := lower(
+    coalesce(new.activation_code,      '') || ' ' ||
+    coalesce(new.warranty_status,      '') || ' ' ||
+    coalesce(new.customer_name,        '') || ' ' ||
+    coalesce(new.customer_mobile,      '') || ' ' ||
+    coalesce(new.serial_number,        '') || ' ' ||
+    coalesce(new.payment_status::text, '') || ' ' ||
+    coalesce(new.contract_id,          '') || ' ' ||
+    coalesce(new.remarks,              '') || ' ' ||
+    coalesce(new.additional_remarks,   '') || ' ' ||
+    coalesce(new.raw::text,            '')
+  );
+  return new;
+end; $$;
+drop trigger if exists tg_godrej_search on godrej_records;
+create trigger tg_godrej_search
+  before insert or update on godrej_records
+  for each row execute function godrej_set_search_text();
+
+create or replace function samsung_set_search_text() returns trigger language plpgsql as $$
+begin
+  new.search_text := lower(
+    coalesce(new.activation_code,    '') || ' ' ||
+    coalesce(new.purchase_date::text,'') || ' ' ||
+    coalesce(new.store_name,         '') || ' ' ||
+    coalesce(new.branch_name,        '') || ' ' ||
+    coalesce(new.model_name,         '') || ' ' ||
+    coalesce(new.serial_number,      '') || ' ' ||
+    coalesce(new.plan_name,          '') || ' ' ||
+    coalesce(new.raw::text,          '')
+  );
+  return new;
+end; $$;
+drop trigger if exists tg_samsung_search on samsung_records;
+create trigger tg_samsung_search
+  before insert or update on samsung_records
+  for each row execute function samsung_set_search_text();
+
+-- backfill existing rows (trigger only fires on future INSERT/UPDATE)
+update hitachi_records set search_text = lower(
+  coalesce(activation_code,    '') || ' ' ||
+  coalesce(purchase_date::text,'') || ' ' ||
+  coalesce(customer_name,      '') || ' ' ||
+  coalesce(customer_mobile,    '') || ' ' ||
+  coalesce(serial_number,      '') || ' ' ||
+  coalesce(crm_id,             '') || ' ' ||
+  coalesce(remarks,            '') || ' ' ||
+  coalesce(additional_remarks, '') || ' ' ||
+  coalesce(raw::text,          '')
+) where search_text is null;
+
+update godrej_records set search_text = lower(
+  coalesce(activation_code,      '') || ' ' ||
+  coalesce(warranty_status,      '') || ' ' ||
+  coalesce(customer_name,        '') || ' ' ||
+  coalesce(customer_mobile,      '') || ' ' ||
+  coalesce(serial_number,        '') || ' ' ||
+  coalesce(payment_status::text, '') || ' ' ||
+  coalesce(contract_id,          '') || ' ' ||
+  coalesce(remarks,              '') || ' ' ||
+  coalesce(additional_remarks,   '') || ' ' ||
+  coalesce(raw::text,            '')
+) where search_text is null;
+
+update samsung_records set search_text = lower(
+  coalesce(activation_code,    '') || ' ' ||
+  coalesce(purchase_date::text,'') || ' ' ||
+  coalesce(store_name,         '') || ' ' ||
+  coalesce(branch_name,        '') || ' ' ||
+  coalesce(model_name,         '') || ' ' ||
+  coalesce(serial_number,      '') || ' ' ||
+  coalesce(plan_name,          '') || ' ' ||
+  coalesce(raw::text,          '')
+) where search_text is null;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+
 create or replace function status_groups(p_table text)
 returns table(key text, label text, total bigint)
 language plpgsql stable security invoker set search_path = public as $$

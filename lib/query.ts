@@ -36,10 +36,11 @@ function cleanPhone(s: string): string {
 function applyFilters(q: any, brand: BrandConfig, filters: Filters): any {
   const rawQ = (filters.q ?? '').replace(/[,()\%]/g, '').trim();
   if (rawQ) {
-    const cols = brand.columns.filter((c) => c.globalSearch).map((c) => c.field);
-    if (cols.length) {
-      const e = escIlike(rawQ);
-      q = q.or(cols.map((f) => `${f}.ilike.%${e}%`).join(','));
+    const e = escIlike(rawQ.toLowerCase());
+    if (brand.globalSearchColumns?.length) {
+      q = q.or(brand.globalSearchColumns.map((f) => `${f}.ilike.%${e}%`).join(','));
+    } else {
+      q = q.ilike('search_text', `%${e}%`);
     }
   }
 
