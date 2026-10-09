@@ -1,10 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { X, ChevronDown } from 'lucide-react';
 import { format, startOfDay, startOfMonth, subDays } from 'date-fns';
 import type { BrandConfig } from '@/lib/brands/types';
+import { createClient } from '@/lib/supabase/client';
+import { samsungBranchOptions, samsungStoreOptions } from '@/lib/query';
+import SearchableDropdown from '@/components/ui/SearchableDropdown';
 
 const fmt = (d: Date) => format(d, 'yyyy-MM-dd');
 const today = () => fmt(startOfDay(new Date()));
@@ -29,6 +32,9 @@ export default function MobileFilterSheet({ open, onClose, brand }: Props) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const supabase = useMemo(() => createClient(), []);
+  const [dropdownOpts, setDropdownOpts] = useState<Record<string, string[]>>({});
+
   // Local state — applied all at once on "Apply"
   const [localFrom, setLocalFrom] = useState('');
   const [localTo, setLocalTo] = useState('');
@@ -45,6 +51,22 @@ export default function MobileFilterSheet({ open, onClose, brand }: Props) {
     }
     setLocalCols(cols);
   }, [open, searchParams, brand.columns]);
+
+  // Fetch store options when sheet opens (Samsung only)
+  useEffect(() => {
+    if (!open || brand.key !== 'samsung') return;
+    samsungStoreOptions(supabase).then((opts) =>
+      setDropdownOpts((prev) => ({ ...prev, store_name: opts })),
+    );
+  }, [open, brand.key, supabase]);
+
+  // Fetch branch options when local store selection changes (Samsung only)
+  useEffect(() => {
+    if (brand.key !== 'samsung') return;
+    samsungBranchOptions(supabase, localCols.store_name || undefined).then((opts) =>
+      setDropdownOpts((prev) => ({ ...prev, branch_name: opts })),
+    );
+  }, [brand.key, supabase, localCols.store_name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Esc key
   useEffect(() => {
@@ -173,7 +195,21 @@ export default function MobileFilterSheet({ open, onClose, brand }: Props) {
                 <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-3">
                   {col.label}
                 </p>
-                {col.filter === 'select' && col.options && col.options.length > 0 ? (
+                {col.filter === 'dropdown' ? (
+                  <SearchableDropdown
+                    value={localCols[col.field] ?? ''}
+                    options={dropdownOpts[col.field] ?? []}
+                    onChange={(v) =>
+                      setLocalCols((prev) => {
+                        const next = { ...prev, [col.field]: v };
+                        // Cascade: changing store clears branch
+                        if (col.field === 'store_name') next['branch_name'] = '';
+                        return next;
+                      })
+                    }
+                    size="md"
+                  />
+                ) : col.filter === 'select' && col.options && col.options.length > 0 ? (
                   <div className="relative">
                     <select
                       value={localCols[col.field] ?? ''}

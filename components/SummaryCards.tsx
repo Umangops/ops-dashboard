@@ -9,13 +9,14 @@ import {
   Clock,
   Tag,
   MoreHorizontal,
+  Building2,
   AlertCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { countBrand, samsungPlanCounts, statusGroups } from '@/lib/query';
 import type { StatusGroup } from '@/lib/query';
-import type { BrandConfig, LiveStatusSummary, Tone } from '@/lib/brands/types';
+import type { BrandConfig, LiveStatusSummary, PartnerSummary, Tone } from '@/lib/brands/types';
 
 // ─── tone style map ───────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ interface CardDef {
   filterField?: string;
   filterValue?: string;
   count: number | null;
+  unclickable?: boolean;
 }
 
 function Card({
@@ -61,9 +63,10 @@ function Card({
 
   return (
     <button
-      onClick={onClick}
+      onClick={card.unclickable ? undefined : onClick}
       className="flex flex-col rounded-[10px] bg-surface p-4 text-left transition-all hover:shadow-sm active:scale-[0.98]"
       style={{
+        cursor: card.unclickable ? 'default' : undefined,
         border: selected ? `2px solid ${ts.border}` : '1px solid #E5E7EB',
         boxShadow: selected ? `0 0 0 3px ${ts.bg}` : undefined,
       }}
@@ -109,11 +112,12 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
   const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
 
-  const isSamsung = brand.key === 'samsung';
   const isLiveStatus = brand.summary.type === 'live-status';
   const isDynamic = brand.summary.type === 'dynamic';
+  const isPartner = brand.summary.type === 'partner';
 
-  const statusField = !isDynamic ? brand.summary.field : null;
+  // null for dynamic (no status field to delete from base filters)
+  const statusField = isDynamic ? null : brand.summary.field;
 
   const paramsKey = searchParams.toString();
   const baseFilters = useMemo(() => {
@@ -121,12 +125,15 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
     searchParams.forEach((v, k) => { f[k] = v; });
     if (statusField) delete f[statusField];
     delete f.sort; delete f.page; delete f.pageSize;
+    // Partner cards exclude global search text — q triggers full-table scan on 149K rows
+    if (isPartner) delete f['q'];
     return f;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramsKey, statusField]);
 
   const [liveGroups, setLiveGroups] = useState<StatusGroup[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [partnerRows, setPartnerRows] = useState<{ store_name: string; total: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -136,7 +143,25 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
     setCounts({});
     setError(null);
 
-    // ── Samsung: use the plan_counts RPC ──
+    // ── Samsung partner cards: total from countBrand (filter-responsive) + per-store from MV (instant) ──
+    if (isPartner) {
+      Promise.all([
+        countBrand(supabase, brand, baseFilters),
+        supabase.from('samsung_partner_mv').select('store_name, total').order('total', { ascending: false }),
+      ]).then(([total, mvResult]) => {
+        if (cancelled) return;
+        const rows = ((mvResult.data ?? []) as { store_name: string; total: number }[]).map((r) => ({
+          store_name: r.store_name,
+          total: Number(r.total),
+        }));
+        setPartnerRows(rows);
+        setCounts({ __total: total });
+        setLoading(false);
+      });
+      return () => { cancelled = true; };
+    }
+
+    // ── Samsung dynamic (plan cards) — legacy, kept for safety ──
     if (isDynamic) {
       samsungPlanCounts(supabase, baseFilters.dateFrom, baseFilters.dateTo).then((rows) => {
         if (cancelled) return;
@@ -207,10 +232,34 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(baseFilters), brand.key, supabase, isLiveStatus, isDynamic]);
+  }, [JSON.stringify(baseFilters), brand.key, supabase, isLiveStatus, isDynamic, isPartner]);
 
   // Build card definitions
   const cards = useMemo((): CardDef[] => {
+    if (isPartner) {
+      const { maxCards } = brand.summary as PartnerSummary;
+      const total = counts['__total'] ?? null;
+      const allTimeTotal = partnerRows.reduce((s, r) => s + r.total, 0);
+      const top = partnerRows.slice(0, maxCards);
+      const topSum = top.reduce((s, r) => s + r.total, 0);
+      const othersTotal = allTimeTotal - topSum;
+      return [
+        { id: '__total', label: 'Total Plans', tone: 'neutral', Icon: FileText, count: total },
+        ...top.map((r) => ({
+          id: r.store_name,
+          label: r.store_name,
+          tone: 'info' as Tone,
+          Icon: Building2,
+          filterField: 'store_name',
+          filterValue: r.store_name,
+          count: r.total,
+        })),
+        ...(othersTotal > 0
+          ? [{ id: '__others', label: 'Other Partners', tone: 'neutral' as Tone, Icon: MoreHorizontal, count: othersTotal, unclickable: true }]
+          : []),
+      ];
+    }
+
     if (isDynamic) {
       const planKeys = Object.keys(counts).filter((k) => !k.startsWith('__'));
       return [
@@ -262,7 +311,7 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
         count: counts[c.value] ?? null,
       })),
     ];
-  }, [brand.summary, counts, isDynamic, isLiveStatus, liveGroups, statusField]);
+  }, [brand.summary, counts, isDynamic, isLiveStatus, isPartner, liveGroups, partnerRows, statusField]);
 
   const handleClick = useCallback(
     (card: CardDef) => {
@@ -281,8 +330,8 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
   );
 
   const activeFilterValue = statusField ? (searchParams.get(statusField) ?? null) : null;
-  const samsungActive = searchParams.get('plan_name') ?? null;
-  const skeletonCount = isSamsung ? 5 : 3;
+  const samsungStoreActive = searchParams.get('store_name') ?? null;
+  const skeletonCount = isPartner ? 6 : 3;
 
   if (error) {
     return (
@@ -299,8 +348,8 @@ export default function SummaryCards({ brand }: SummaryCardsProps) {
         ? Array.from({ length: skeletonCount }).map((_, i) => <CardSkeleton key={i} />)
         : cards.map((card) => {
             let selected = false;
-            if (isSamsung) {
-              selected = card.filterValue != null && samsungActive === card.filterValue;
+            if (isPartner) {
+              selected = card.filterValue != null && samsungStoreActive === card.filterValue;
             } else if (card.filterField && card.filterValue) {
               selected = activeFilterValue === card.filterValue;
             }

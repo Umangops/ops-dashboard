@@ -56,7 +56,7 @@ export const samsung: BrandConfig = {
       header: 'Store_Name',
       label: 'Store Name',
       type: 'text',
-      filter: 'search',
+      filter: 'dropdown',
       globalSearch: true,
     },
     {
@@ -64,7 +64,7 @@ export const samsung: BrandConfig = {
       header: 'Branch_Name',
       label: 'Branch Name',
       type: 'text',
-      filter: 'search',
+      filter: 'dropdown',
       globalSearch: true,
     },
   ],
@@ -74,16 +74,15 @@ export const samsung: BrandConfig = {
   },
 
   summary: {
-    type: 'dynamic',
-    field: 'plan_name',
-    maxCards: 3,    // Total + top 3 plan names + Others
+    type: 'partner',
+    field: 'store_name',
+    maxCards: 4,   // Total + top 4 partners + Other Partners
   },
 
   mobileFields: ['serial_number', 'model_name', 'plan_name', 'store_name'],
 
-  // No search_text GIN index (disk full on Free plan). Per-column OR uses existing
-  // sam_code_trgm / sam_serial_trgm / sam_store_trgm trigram indexes instead.
-  globalSearchColumns: ['activation_code', 'serial_number', 'store_name', 'branch_name', 'model_name', 'plan_name'],
+  // Only trigram-indexed columns — store/branch filtering now via dropdowns.
+  globalSearchColumns: ['activation_code', 'serial_number'],
 
   maskedColumnKeywords: ['mobile', 'phone', 'contact', 'email', 'address', 'city', 'state'],
 };

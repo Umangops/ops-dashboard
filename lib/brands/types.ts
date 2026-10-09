@@ -1,4 +1,4 @@
-export type FilterType = 'search' | 'select' | 'dateRange';
+export type FilterType = 'search' | 'select' | 'dateRange' | 'dropdown';
 export type Tone = 'info' | 'success' | 'warning' | 'danger' | 'neutral';
 
 export interface BrandColumn {
@@ -26,6 +26,12 @@ export interface DynamicSummary {
   maxCards: number;
 }
 
+export interface PartnerSummary {
+  type: 'partner';
+  field: string;    // 'store_name'
+  maxCards: number; // top N partner cards before "Other Partners"
+}
+
 export interface LiveStatusSummary {
   type: 'live-status';
   field: string;        // e.g. 'remarks'
@@ -43,7 +49,7 @@ export interface BrandConfig {
   columns: BrandColumn[];
   ignoredHeaders?: string[];
   statusTones: Record<string, Tone>;
-  summary: StatusSummary | DynamicSummary | LiveStatusSummary;
+  summary: StatusSummary | DynamicSummary | LiveStatusSummary | PartnerSummary;
   mobileFields: string[];
   // When set, global search uses per-column OR instead of search_text ILIKE.
   // Use for tables where no search_text GIN index exists (disk space constraint).

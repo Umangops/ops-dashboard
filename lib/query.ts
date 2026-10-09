@@ -50,6 +50,9 @@ function applyFilters(q: any, brand: BrandConfig, filters: Filters): any {
     if (col.filter === 'search') {
       const v = col.field === 'customer_mobile' ? cleanPhone(val) : val;
       q = q.ilike(col.field, `%${escIlike(v)}%`);
+    } else if (col.filter === 'dropdown') {
+      // Exact case-insensitive match from searchable dropdown
+      q = q.ilike(col.field, escIlike(val.trim()));
     } else if (col.filter === 'select') {
       if (col.type === 'boolean') {
         q = q.eq(col.field, val === 'Paid');
@@ -122,6 +125,39 @@ export async function statusGroups(
   return (data as { key: string; label: string; total: bigint | number }[]).map((r) => ({
     key: r.key,
     label: r.label,
+    total: Number(r.total),
+  }));
+}
+
+// Samsung store dropdown options.
+export async function samsungStoreOptions(supabase: SupabaseClient): Promise<string[]> {
+  const { data, error } = await supabase.rpc('samsung_store_options');
+  if (error || !data) return [];
+  return (data as { store_name: string }[]).map((r) => r.store_name);
+}
+
+// Samsung branch dropdown options — optionally filtered by selected store.
+export async function samsungBranchOptions(supabase: SupabaseClient, store?: string): Promise<string[]> {
+  const { data, error } = await supabase.rpc('samsung_branch_options', { p_store: store ?? null });
+  if (error || !data) return [];
+  return (data as { branch_name: string }[]).map((r) => r.branch_name);
+}
+
+// Samsung partner card counts — groups by store_name, respects all current filters.
+export async function samsungPartnerCounts(
+  supabase: SupabaseClient,
+  filters: Record<string, string>,
+): Promise<{ store_name: string; total: number }[]> {
+  const { data, error } = await supabase.rpc('samsung_partner_counts', {
+    p_q:       filters.q       || null,
+    p_plan:    filters.plan_name || null,
+    p_branch:  filters.branch_name || null,
+    date_from: filters.dateFrom || null,
+    date_to:   filters.dateTo   || null,
+  });
+  if (error || !data) return [];
+  return (data as { store_name: string; total: number | bigint }[]).map((r) => ({
+    store_name: r.store_name,
     total: Number(r.total),
   }));
 }

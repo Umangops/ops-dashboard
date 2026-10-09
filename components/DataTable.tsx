@@ -14,8 +14,9 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { queryBrand, statusGroups } from '@/lib/query';
+import { queryBrand, samsungBranchOptions, samsungStoreOptions, statusGroups } from '@/lib/query';
 import type { StatusGroup } from '@/lib/query';
+import SearchableDropdown from '@/components/ui/SearchableDropdown';
 import type { BrandColumn, BrandConfig, Tone } from '@/lib/brands/types';
 import RecordDrawer from '@/components/RecordDrawer';
 import { cn } from '@/lib/utils';
@@ -71,16 +72,30 @@ function ColFilter({
   value,
   onChange,
   dynamicOptions,
+  dropdownOptions,
 }: {
   col: BrandColumn;
   value: string;
   onChange: (v: string) => void;
   dynamicOptions?: { key: string; label: string }[];
+  dropdownOptions?: string[];
 }) {
   const [local, setLocal] = useState(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { setLocal(value); }, [value]);
+
+  // searchable dropdown
+  if (col.filter === 'dropdown') {
+    return (
+      <SearchableDropdown
+        value={value}
+        options={dropdownOptions ?? []}
+        onChange={onChange}
+        size="sm"
+      />
+    );
+  }
 
   // Build option list: dynamic (keyField column) or static (options array)
   const opts: { key: string; label: string }[] = col.keyField
@@ -177,6 +192,8 @@ export default function DataTable({ brand }: DataTableProps) {
       const p = new URLSearchParams(searchParams.toString());
       if (value) p.set(key, value); else p.delete(key);
       if (key !== 'page') p.delete('page');
+      // Cascade: changing store clears branch
+      if (key === 'store_name') p.delete('branch_name');
       router.replace(`${pathname}?${p.toString()}`);
     },
     [searchParams, pathname, router],
@@ -189,6 +206,7 @@ export default function DataTable({ brand }: DataTableProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
   const [statusOpts, setStatusOpts] = useState<{ key: string; label: string }[]>([]);
+  const [dropdownOpts, setDropdownOpts] = useState<Record<string, string[]>>({});
   const supabase = useMemo(() => createClient(), []);
 
   // Fetch dynamic status options once per brand (for keyField columns)
@@ -199,6 +217,22 @@ export default function DataTable({ brand }: DataTableProps) {
       setStatusOpts(groups.map((g) => ({ key: g.key, label: g.label })));
     });
   }, [brand.key, supabase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch store dropdown options once per brand
+  useEffect(() => {
+    if (brand.key !== 'samsung') return;
+    samsungStoreOptions(supabase).then((opts) => {
+      setDropdownOpts((prev) => ({ ...prev, store_name: opts }));
+    });
+  }, [brand.key, supabase]);
+
+  // Fetch branch options — refresh whenever selected store changes
+  useEffect(() => {
+    if (brand.key !== 'samsung') return;
+    samsungBranchOptions(supabase, filters.store_name || undefined).then((opts) =>
+      setDropdownOpts((prev) => ({ ...prev, branch_name: opts })),
+    );
+  }, [brand.key, supabase, filters.store_name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;
@@ -314,6 +348,7 @@ export default function DataTable({ brand }: DataTableProps) {
                       value={filters[col.field] ?? ''}
                       onChange={(v) => setParam(col.field, v || null)}
                       dynamicOptions={col.keyField ? statusOpts : undefined}
+                      dropdownOptions={col.filter === 'dropdown' ? (dropdownOpts[col.field] ?? []) : undefined}
                     />
                   </th>
                 );
