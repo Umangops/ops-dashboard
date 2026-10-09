@@ -48,4 +48,5 @@ export interface BrandConfig {
   // When set, global search uses per-column OR instead of search_text ILIKE.
   // Use for tables where no search_text GIN index exists (disk space constraint).
   globalSearchColumns?: string[];
+  maskedColumnKeywords?: string[];
 }

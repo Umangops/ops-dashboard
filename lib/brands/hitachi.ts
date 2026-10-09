@@ -98,4 +98,6 @@ export const hitachi: BrandConfig = {
   },
 
   mobileFields: ['customer_name', 'customer_mobile', 'serial_number', 'purchase_date'],
+
+  maskedColumnKeywords: ['mobile', 'phone', 'contact', 'email', 'address', 'city', 'state'],
 };

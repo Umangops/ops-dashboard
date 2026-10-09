@@ -84,4 +84,6 @@ export const samsung: BrandConfig = {
   // No search_text GIN index (disk full on Free plan). Per-column OR uses existing
   // sam_code_trgm / sam_serial_trgm / sam_store_trgm trigram indexes instead.
   globalSearchColumns: ['activation_code', 'serial_number', 'store_name', 'branch_name', 'model_name', 'plan_name'],
+
+  maskedColumnKeywords: ['mobile', 'phone', 'contact', 'email', 'address', 'city', 'state'],
 };

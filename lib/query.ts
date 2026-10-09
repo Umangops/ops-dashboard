@@ -75,7 +75,7 @@ export async function queryBrand(
 ): Promise<PageResult> {
   const page = Math.max(1, parseInt(filters.page ?? '1', 10));
   const rawSize = parseInt(filters.pageSize ?? '25', 10);
-  const pageSize = ([25, 50, 100] as number[]).includes(rawSize) ? rawSize : 25;
+  const pageSize = Number.isFinite(rawSize) ? Math.min(Math.max(1, rawSize), 1_000) : 25;
   const offset = (page - 1) * pageSize;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

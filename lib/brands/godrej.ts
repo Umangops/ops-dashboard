@@ -111,4 +111,6 @@ export const godrej: BrandConfig = {
   },
 
   mobileFields: ['customer_name', 'customer_mobile', 'serial_number', 'remarks'],
+
+  maskedColumnKeywords: ['mobile', 'phone', 'contact', 'email', 'address', 'city', 'state'],
 };
