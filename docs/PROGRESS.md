@@ -100,6 +100,7 @@
 | 9 Oct | Global search missed store/distributor names | `globalSearch` only covered a few explicit columns; store_name and other fields in raw jsonb were invisible | Added `search_text` trigger column (lower of all columns + raw::text) on all 3 tables; changed `lib/query.ts` to `ilike('search_text', '%...%')` | — |
 | 9 Oct | Generated column rejected with "not immutable" | `date::text` and `jsonb::text` casts are STABLE not IMMUTABLE in PostgreSQL | Switched to BEFORE INSERT OR UPDATE trigger function (no immutability constraint) + manual backfill UPDATE | — |
 | 9 Oct | Supabase "No space left on device" on Samsung GIN index | GIN trigram indexes on 149K-row table exhausted Free plan 500 MB disk | Dropped all 3 `search_trgm` GIN indexes; search_text ILIKE works via sequential scan (acceptable speed) | — |
+| 9 Oct | Export downloaded only 25 rows instead of all | `queryBrand` page-size whitelist `[25,50,100]` — export's `pageSize:'1000'` fell back to 25 | Replaced whitelist with `Math.min(rawSize, 1_000)` | `bdc10a8` |
 
 ---
 
@@ -117,36 +118,16 @@ All SQL was run in the Supabase SQL Editor. Safe to re-run (idempotent).
 
 > **Not yet run:** Samsung does not have a `remarks_key` column or `status_groups` integration (Samsung uses `plan_name` for its summary cards instead).
 
-5. **`search_text` trigger column** (9 Oct) — added plain `text` column to all 3 tables. BEFORE INSERT OR UPDATE trigger populates it as `lower(all columns || ' ' || raw::text)`. Hitachi and Godrej backfilled. Samsung backfill pending (DB quota exhausted mid-session). GIN trigram indexes (`hit_search_trgm`, `god_search_trgm`, `sam_search_trgm`) were created then **dropped** to reclaim disk space on Free plan. Full SQL in `supabase/schema.sql`.
+5. **`search_text` trigger column** (9 Oct) — added plain `text` column to all 3 tables. BEFORE INSERT OR UPDATE trigger populates it as `lower(all columns || ' ' || raw::text)`. All 3 tables backfilled. GIN trigram indexes (`hit_search_trgm`, `god_search_trgm`, `sam_search_trgm`) were created then **dropped** to reclaim disk space (DB at 829 MB). Full SQL in `supabase/schema.sql`.
 
 ---
 
 ## 6. Next Steps (in priority order)
 
-1. **Samsung `search_text` backfill** — DB was read-only (compute quota exhausted) during session. Once DB renews, run in Supabase SQL Editor:
-   ```sql
-   drop index if exists hit_search_trgm;
-   drop index if exists god_search_trgm;
-   drop index if exists sam_search_trgm;
-   ```
-   Then:
-   ```sql
-   update samsung_records set search_text = lower(
-     coalesce(activation_code,    '') || ' ' ||
-     coalesce(purchase_date::text,'') || ' ' ||
-     coalesce(store_name,         '') || ' ' ||
-     coalesce(branch_name,        '') || ' ' ||
-     coalesce(model_name,         '') || ' ' ||
-     coalesce(serial_number,      '') || ' ' ||
-     coalesce(plan_name,          '') || ' ' ||
-     coalesce(raw::text,          '')
-   ) where search_text is null;
-   ```
-   GIN indexes dropped to save space (Free plan 500 MB limit); ILIKE on search_text works without them.
-2. **Verify Hitachi and Godrej imports work end-to-end** after the `sheets` OOM fix — test with the real Excel file on localhost and then in production.
-3. **Samsung import strategy** — 149K rows cannot be imported from the browser. Options: (a) chunk the Excel into multiple CSV files and import each separately, (b) have the user upload to Supabase Storage and trigger a scheduled function, (c) use the existing `/public/import-worker.js` static Web Worker (already written, needs testing). Decide before proceeding.
-4. **Users / admin page** — if multiple staff members need separate logins or roles, add a simple user management page. Currently one shared login.
-5. **`middleware` → `proxy` migration** — pre-existing deprecation warning from Next.js 16. Run `npx @next/codemod@canary middleware-to-proxy .` when convenient; low priority.
+1. **Verify Hitachi and Godrej imports work end-to-end** after the `sheets` OOM fix — test with the real Excel file on localhost and then in production.
+2. **Samsung import strategy** — 149K rows cannot be imported from the browser. Options: (a) chunk the Excel into multiple CSV files and import each separately, (b) have the user upload to Supabase Storage and trigger a scheduled function, (c) use the existing `/public/import-worker.js` static Web Worker (already written, needs testing). Decide before proceeding.
+3. **Users / admin page** — if multiple staff members need separate logins or roles, add a simple user management page. Currently one shared login.
+4. **`middleware` → `proxy` migration** — pre-existing deprecation warning from Next.js 16. Run `npx @next/codemod@canary middleware-to-proxy .` when convenient; low priority.
 
 ---
 
@@ -164,7 +145,17 @@ Long session fixing two main issues:
 ### 2026-10-09
 **Global search overhaul** — searching "croma" on Samsung or "Hindustan Distributor" on Godrej was returning nothing because store names were only in the `raw` jsonb column, invisible to the column-by-column OR query.
 - Added `search_text text` column to all 3 tables, maintained by BEFORE INSERT OR UPDATE trigger (`lower(all columns || raw::text)`).
-- Changed `lib/query.ts` global search from multi-column OR to single `ilike('search_text', '%...%')`.
-- Added `globalSearch: true` to Samsung's `store_name`, `branch_name`, `model_name`, `plan_name` columns.
-- **Issues hit during SQL:** (a) Generated column approach failed — `date::text` is STABLE not IMMUTABLE; switched to trigger. (b) GIN trigram indexes on Samsung (149K rows) caused "No space left on device" — Free plan 500 MB disk exhausted. Dropped all 3 GIN indexes; ILIKE sequential scan is acceptable. (c) DB compute quota exhausted mid-session — Samsung backfill UPDATE (`where search_text is null`) still pending.
-- Hitachi and Godrej global search verified working on localhost. Samsung search works for future imports (trigger is live); backfill needed for existing 149K rows.
+- Changed `lib/query.ts` global search from multi-column OR to single `ilike('search_text', '%...%')` for Hitachi/Godrej.
+- Added `globalSearchColumns` override to `BrandConfig` — when set, uses per-column OR instead of `search_text` ILIKE.
+- Samsung uses `globalSearchColumns` (activation_code, serial_number, store_name, branch_name, model_name, plan_name) because disk was full — no GIN index on `search_text` possible. Existing `sam_store_trgm`, `sam_code_trgm`, `sam_serial_trgm` trigram indexes make store/code/serial searches fast.
+- **Issues hit during SQL:** (a) Generated column approach failed — `date::text` is STABLE not IMMUTABLE; switched to trigger. (b) GIN trigram indexes on Samsung (149K rows) caused "No space left on device" — 829 MB disk exhausted. Dropped all 3 GIN indexes. (c) DB compute quota exhausted mid-session — Samsung backfill completed in second session. (d) Vercel deployment blocked — GitHub repo was private; made public, triggered redeploy via empty commit.
+- All three brands verified working in production (Vercel). Commits: `26a96b4`, `66dfff8`.
+
+### 2026-10-09 (Session 2)
+**Export all rows + data masking in downloads**
+- **Root bug:** `queryBrand` had a page-size whitelist `[25, 50, 100]` — any other value fell back to 25. Export was passing 1000 but only getting 25 rows per page. Fixed: replaced whitelist with `Math.min(rawSize, 1_000)`.
+- **lib/mask.ts (new):** Masking module with `getMaskType` (mobile/text2/email detection by keyword) and `maskStr`. Mobile → first2+last2 with `*` fill. Email → local part masked (first2 kept), `@domain` preserved. Address/city/state → first2 + `*`. Strings ≤4 chars → fully masked.
+- **lib/export.ts rewritten:** Fetches all pages in 1000-row chunks, shows "Preparing X / Y…" progress, `isCancelled` callback checked between pages. Incremental CSV (array of chunks → Blob). Excel capped at 100K rows; larger exports auto-force CSV. Masking applied to schema columns (by `col.field` then `col.label`) and raw jsonb keys. `csvInject` prefix protection.
+- **ExportDialog.tsx:** Cancel button (X) shown during fetch, `cancelledRef` pattern. Excel button disabled+dimmed when `forceCsv`. "Large export — downloading as CSV" note. Masking note: "Mobile, email, address, city and state are masked in downloads." Export button shows full unfiltered count.
+- **Brand configs:** `maskedColumnKeywords: ['mobile', 'phone', 'contact', 'email', 'address', 'city', 'state']` added to all 3 brands. `globalSearchColumns` and `maskedColumnKeywords` fields added to `BrandConfig` type.
+- Tested on localhost (Hitachi, 154 records with "shree jain" filter) — all 154 downloaded correctly. Commit: `bdc10a8`.
